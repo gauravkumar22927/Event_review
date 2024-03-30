@@ -18,8 +18,20 @@ mongoose
 
 app.use(bodyParser.json())
 
+app.use((req, res, next) => {
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization")
+  next()
+})
 // Use feed routes
 app.use("/", feedRoutes)
+
+app.use((error, req, res, next) => {
+  console.log(error)
+  const status = error.statusCode || 500
+  const message = error.message
+  const data = error.data
+  res.status(status).json({ message: message, data: data })
+})
 
 // Start server
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`))

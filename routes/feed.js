@@ -1,10 +1,15 @@
 const express = require("express")
 const router = express.Router()
 const { User, Organizer, Admin, Review, Event } = require("../models/model")
+const { body, validationResult } = require("express-validator")
+const bcrypt = require("bcryptjs")
+const jwt = require("jsonwebtoken")
+const isAuth = require("../middleware/isAuth")
+
 // MongoDB Connection in app.js
 
 // GET request for fetching all users
-router.get("/users", async (req, res, next) => {
+router.get("/users", isAuth, async (req, res, next) => {
   try {
     const users = await User.find()
     res.json(users)
@@ -14,14 +19,86 @@ router.get("/users", async (req, res, next) => {
 })
 
 // POST request for creating a new user
-router.post("/users", async (req, res, next) => {
-  const newUser = new User(req.body)
-  try {
-    const savedUser = await newUser.save()
-    res.status(201).json(savedUser)
-  } catch (error) {
-    res.status(400).json({ message: error.message })
+router.post(
+  "/users",
+  [
+    body("email")
+      .isEmail()
+      .withMessage("Please enter a valid email.")
+      .custom((value, { req }) => {
+        return User.findOne({ email: value }).then((obj) => {
+          if (obj) {
+            return Promise.reject("E-mail already exists!")
+          }
+        })
+      })
+      .normalizeEmail(),
+    body("password").trim().isLength({ min: 5 }).withMessage("Password must be at least 5 characters long."),
+    body("username").trim().not().isEmpty().withMessage("Username cannot be empty."),
+  ],
+  async (req, res, next) => {
+    const errors = validationResult(req)
+    if (!errors.isEmpty()) {
+      const error = new Error("Validation failed.")
+      error.statusCode = 422
+      error.data = errors.array()
+      return next(error)
+    }
+    try {
+      const password = req.body.password
+      const email = req.body.email
+      const username = req.body.username
+
+      // Hash password
+      const hashedPassword = await bcrypt.hash(password, 12)
+
+      // Create new user with hashed password
+      const newUser = new User({
+        email: email,
+        password: hashedPassword,
+        username: username,
+      })
+
+      // Save user
+      const savedUser = await newUser.save()
+      res.status(201).json(savedUser)
+    } catch (error) {
+      res.status(400).json({ message: error.message })
+    }
   }
+)
+
+//login and generate jwt token
+router.post("/userlogin", async (req, res, next) => {
+  const email = req.body.email
+  const password = req.body.password
+  let loadedUser
+  await User.findOne({ email: email })
+    .then((user) => {
+      if (!user) {
+        const error = new Error("A User with this email couldnot be found.")
+        error.statusCode = 401
+        return next(error)
+      }
+      loadedUser = user
+      return bcrypt.compare(password, user.password)
+    })
+    .then((isEqual) => {
+      if (!isEqual) {
+        const error = new Error("Wrong password!")
+        error.statusCode = 401
+        return next(error)
+      }
+    })
+  const token = jwt.sign(
+    {
+      email: loadedUser.email,
+      userId: loadedUser._id.toString(),
+    },
+    "somesupersecrettoken",
+    { expiresIn: "1h" }
+  )
+  res.status(200).json({ token: token, userId: loadedUser._id.toString() })
 })
 
 // GET request for fetching all events
